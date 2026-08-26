@@ -1,9 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
+	"net/http"
 	"sync"
 	"time"
 )
@@ -73,40 +75,24 @@ func (q *Queue) Dequeue() (job *Job, err error) {
 func main() {
 	fmt.Println("DQueue starting...")
 
-	var wg sync.WaitGroup
-
 	queue := &Queue{}
 
-	queue.Enqueue(NewJob("test 1", "payload 1"))
-	queue.Enqueue(NewJob("test 2", "payload 2"))
-	queue.Enqueue(NewJob("test 3", "payload 3"))
-	queue.Enqueue(NewJob("test 4", "payload 4"))
-	queue.Enqueue(NewJob("test 5", "payload 5"))
-	queue.Enqueue(NewJob("test 6", "payload 6"))
-
-	for i := 1; i <= 20; i++ {
-		wg.Add(1)
-		go worker(i, queue, &wg)
+	for i := 1; i <= 5; i++ {
+		go worker(i, queue)
 	}
 
-	wg.Wait()
+	http.HandleFunc("/jobs", enqueueHandler(queue))
+	fmt.Println("Escuchando en :8080...")
+	http.ListenAndServe(":8080", nil)
 
-	// for i := 0; i < 4; i++ {
-	// 	job, err := queue.Dequeue()
-	// 	if err != nil {
-	// 		fmt.Printf("%d: No hay más Jobs en la cola\n", i+1)
-	// 	} else {
-	// 		fmt.Printf("Se retiro el Job %d de la cola\n", job.ID)
-	// 	}
-	// }
 }
 
-func worker(id int, queue *Queue, wg *sync.WaitGroup) {
-	defer wg.Done()
+func worker(id int, queue *Queue) {
 	for {
 		job, err := queue.Dequeue()
 		if err != nil {
-			return
+			time.Sleep(5 * time.Second)
+			continue
 		} else {
 			job.Status = StatusRunning
 			time.Sleep(1 * time.Second)
@@ -129,5 +115,21 @@ func worker(id int, queue *Queue, wg *sync.WaitGroup) {
 
 			}
 		}
+	}
+}
+
+func enqueueHandler(queue *Queue) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Name    string `json:"name"`
+			Payload string `json:"payload"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, "JSON inválido", http.StatusBadRequest)
+			return
+		}
+		job := NewJob(req.Name, req.Payload)
+		queue.Enqueue(job)
+		fmt.Fprintf(w, "Job %d encolado\n", job.ID)
 	}
 }
