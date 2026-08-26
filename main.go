@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"math/rand"
 	"sync"
 	"time"
 )
@@ -11,8 +12,19 @@ type Job struct {
 	ID        int
 	Name      string
 	Payload   string
+	Status    JobStatus
+	Attempts  int
 	CreatedAt time.Time
 }
+
+type JobStatus string
+
+const (
+	StatusPending JobStatus = "pending"
+	StatusRunning JobStatus = "running"
+	StatusDone    JobStatus = "done"
+	StatusFailed  JobStatus = "failed"
+)
 
 type Queue struct {
 	jobs []*Job
@@ -21,12 +33,15 @@ type Queue struct {
 
 var nextID = 1
 
+const MaxRetries = 3
+
 func NewJob(name string, payload string) *Job {
 	newJob := &Job{}
 
 	newJob.ID = nextID
 	newJob.Name = name
 	newJob.Payload = payload
+	newJob.Status = StatusPending
 	newJob.CreatedAt = time.Now()
 
 	nextID++
@@ -93,8 +108,26 @@ func worker(id int, queue *Queue, wg *sync.WaitGroup) {
 		if err != nil {
 			return
 		} else {
-			fmt.Printf("Worker %d procesando Job %d (%s)\n", id, job.ID, job.Name)
-			time.Sleep(2 * time.Second)
+			job.Status = StatusRunning
+			time.Sleep(1 * time.Second)
+
+			failed := rand.Intn(100) < 40
+
+			if failed {
+				job.Attempts++
+				if job.Attempts < MaxRetries {
+					job.Status = StatusPending
+					fmt.Printf("Worker %d: Job %d falló reintento %d/%d\n", id, job.ID, job.Attempts, MaxRetries)
+					queue.Enqueue(job)
+				} else {
+					job.Status = StatusFailed
+					fmt.Printf("Worker %d: Job %d falló definitivamente %d/%d\n", id, job.ID, job.Attempts, MaxRetries)
+				}
+			} else {
+				job.Status = StatusDone
+				fmt.Printf("Worker %d: Job %d se completó exitosamente %d/%d\n", id, job.ID, job.Attempts, MaxRetries)
+
+			}
 		}
 	}
 }
