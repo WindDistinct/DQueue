@@ -1,11 +1,14 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
 	"net/http"
+	"os"
+	"os/signal"
 	"sync"
 	"time"
 )
@@ -73,22 +76,47 @@ func (q *Queue) Dequeue() (job *Job, err error) {
 }
 
 func main() {
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	defer stop()
+
+	var wg sync.WaitGroup
+
 	fmt.Println("DQueue starting...")
 
 	queue := &Queue{}
 
 	for i := 1; i <= 5; i++ {
-		go worker(i, queue)
+		wg.Add(1)
+		go worker(i, queue, ctx, &wg)
 	}
 
+	server := &http.Server{Addr: ":8080"}
 	http.HandleFunc("/jobs", enqueueHandler(queue))
-	fmt.Println("Escuchando en :8080...")
-	http.ListenAndServe(":8080", nil)
 
+	go func() {
+		server.ListenAndServe()
+	}()
+
+	<-ctx.Done()
+
+	fmt.Println("Señal de apagado recibida...")
+	server.Shutdown(context.Background())
+	wg.Wait()
+	fmt.Println("DQueue apagado correctamente.")
 }
 
-func worker(id int, queue *Queue) {
+func worker(id int, queue *Queue, ctx context.Context, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	for {
+		select {
+		case <-ctx.Done():
+			fmt.Printf("Worker %d: apagando...\n", id)
+			return
+
+		default:
+		}
 		job, err := queue.Dequeue()
 		if err != nil {
 			time.Sleep(5 * time.Second)
@@ -114,6 +142,7 @@ func worker(id int, queue *Queue) {
 				fmt.Printf("Worker %d: Job %d se completó exitosamente %d/%d\n", id, job.ID, job.Attempts, MaxRetries)
 
 			}
+
 		}
 	}
 }
